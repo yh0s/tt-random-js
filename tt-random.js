@@ -103,6 +103,49 @@
     };
 
     // ==========================================
+    // UI基盤: ローディング（ぐるぐる）モジュール ★新規追加
+    // ==========================================
+    let loadingOverlay = null;
+    const showLoading = () => {
+        if (!document.getElementById('tt-spin-css')) {
+            const style = document.createElement('style');
+            style.id = 'tt-spin-css';
+            style.textContent = '@keyframes tt-spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }';
+            document.head.appendChild(style);
+        }
+
+        loadingOverlay = document.createElement('div');
+        loadingOverlay.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,0.5);z-index:2147483647;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(2px);';
+
+        const box = document.createElement('div');
+        box.style.cssText = 'background:#fff;padding:24px;border-radius:12px;box-shadow:0 10px 25px rgba(0,0,0,0.2);min-width:320px;max-width:90%;text-align:center;font-family:sans-serif;color:#333;box-sizing:border-box;';
+
+        const spinner = document.createElement('div');
+        spinner.style.cssText = 'width:40px;height:40px;border:4px solid #e9ecef;border-top:4px solid #0d6efd;border-radius:50%;animation:tt-spin 1s linear infinite;margin:0 auto 15px auto;';
+        box.appendChild(spinner);
+
+        const title = document.createElement('h4');
+        title.textContent = '検索中...';
+        title.style.cssText = 'margin:0 0 10px 0;font-size:1.2rem;font-weight:bold;color:#212529;';
+        box.appendChild(title);
+
+        const msg = document.createElement('p');
+        msg.textContent = 'ランダムに抽出・解析しています';
+        msg.style.cssText = 'margin:0;font-size:0.95rem;color:#495057;';
+        box.appendChild(msg);
+
+        loadingOverlay.appendChild(box);
+        document.body.appendChild(loadingOverlay);
+    };
+
+    const hideLoading = () => {
+        if (loadingOverlay) {
+            loadingOverlay.remove();
+            loadingOverlay = null;
+        }
+    };
+
+    // ==========================================
     // データ抽出モジュール (検索結果一覧用)
     // ==========================================
     const extractMovieData = (randomBox) => {
@@ -224,7 +267,7 @@
                     }
                 };
 
-                // ★修正: モーダルが画面(DOM)に表示されるまで待ってからプレーヤーを初期化する
+                // モーダルが画面(DOM)に表示されるまで待ってからプレーヤーを初期化する
                 if (window.YT && window.YT.Player) {
                     let attempts = 0;
                     const checkAndInitPlayer = () => {
@@ -305,6 +348,9 @@
     const origTitle = document.title;
     document.title = "🔄 抽出中...";
 
+    // ★追加: 検索・解析が始まる直前にローディングモーダルを表示
+    showLoading();
+
     try {
         let res1 = await fetch(`/search?lv=${lv}&page=1`);
         let text1 = await res1.text();
@@ -324,24 +370,27 @@
 
         let boxes = doc2.querySelectorAll("a.movie-card");
         if (boxes.length === 0) {
+            hideLoading(); // ★追加: エラー表示前にローディングを閉じる
             await showModal({ title: "結果", message: "アイテムが見つかりませんでした。" });
             return;
         }
         let randomBox = boxes[Math.floor(Math.random() * boxes.length)];
 
-        // ★モジュールを利用して基本情報を抽出
+        // モジュールを利用して基本情報を抽出
         const movieData = extractMovieData(randomBox);
         if (!movieData.id) {
+            hideLoading(); // ★追加: エラー表示前にローディングを閉じる
             await showModal({ title: "エラー", message: "IDを抽出できませんでした。" });
             return;
         }
 
-        // ★詳細ページをフェッチして行数・打鍵数を取得し、データをマージ
+        // 詳細ページをフェッチして行数・打鍵数を取得し、データをマージ
         const movieDetails = await fetchMovieDetails(movieData.id);
         movieData.linesStr = movieDetails.linesStr;
         movieData.keysStr = movieDetails.keysStr;
 
-        // ★モジュールを利用してリッチなUIを構築 (非同期になったためawaitを追加)
+        // モジュールを利用してリッチなUIを構築 (非同期なのでawaitを追加)
+        // ※ この処理中にYouTube APIのロード待ちも行われます
         const contentDiv = await buildRichContent(movieData, lv);
 
         // ==========================================
@@ -351,10 +400,9 @@
         statusMsg.style.cssText = `margin-top:12px; font-size:0.85rem; font-weight:bold; text-align:center; min-height:1.5em;`;
         contentDiv.appendChild(statusMsg);
 
-        // ★追加: 適切なページ（バトルルーム等）かどうかを判定する
-        // 適切なページにいる場合のみ提案ボタンを表示する
+        // 適切なページ（バトルルーム等）かどうかを判定する
         if (window.location.href.match(/typing-tube\.net\/battle\/\d+/)) {
-            // ★要件2: モーダルのチャット提案ボタンを「曲を提案」ボタンとして再定義
+            // モーダルのチャット提案ボタンを「曲を提案」ボタンとして再定義
             const proposeBtn = document.createElement('button');
             proposeBtn.textContent = "曲を提案";
             proposeBtn.style.cssText = "display:block; width:100%; padding:10px; margin-top:10px; background:#198754; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:1rem; font-weight:bold; transition:background 0.2s;";
@@ -362,16 +410,15 @@
             proposeBtn.onmouseout = () => { if (!proposeBtn.disabled) proposeBtn.style.background = "#198754"; };
 
             proposeBtn.onclick = () => {
-                // ★要件3: 提案APIを叩く
+                // 提案APIを叩く
                 proposeMovie(movieData.id);
 
-                // ★要件1 (チャット提案機能の維持): チャット欄への書き込みと送信を同時に行う
+                // チャット欄への書き込みと送信を同時に行う
                 const chatInput = document.querySelector(".room-chat-input");
                 const sendBtn = document.querySelector(".room-chat-send-btn");
 
                 if (chatInput && sendBtn) {
                     // 入力欄に規定のフォーマットで文字列をセット
-                    // chatInput.value = `[Random API] #${movieData.id} - ${movieData.title} (${movieData.fullUrl})`;
                     chatInput.value = `[Random API] Lv.${lv} #${movieData.id} - ${movieData.title} (${movieData.fullUrl})`;
 
                     // サイト側のJSフレームワーク（Stimulusなど）に入力変更を検知させるためのイベント発火
@@ -383,7 +430,7 @@
                     console.warn("チャット欄が見つかりません。（バトルルーム外の可能性があります）");
                 }
 
-                // ★要件統合: ボタンの無効化（二重提案防止）とUI更新
+                // ボタンの無効化（二重提案防止）とUI更新
                 proposeBtn.disabled = true;
                 proposeBtn.textContent = "提案完了";
                 proposeBtn.style.background = "#6c757d";
@@ -395,6 +442,9 @@
             contentDiv.appendChild(proposeBtn);
         }
 
+        // ★追加: 準備が全て整ったので、ローディングを閉じる
+        hideLoading();
+
         // 最終確認モーダルの表示
         await showModal({
             title: "🎉 抽選完了",
@@ -402,8 +452,10 @@
         });
 
     } catch (err) {
+        hideLoading(); // ★追加: エラー時も確実に閉じる
         await showModal({ title: "エラーが発生しました", message: err.message });
     } finally {
+        hideLoading(); // ★追加: 安全装置としてfinallyにも配置
         document.title = origTitle;
     }
 })();
